@@ -1,0 +1,35 @@
+__pycache__/
+*.pyc
+
+# Local caches and generated data
+data/
+legacy-web/data/
+*.sqlite3
+*.sqlite3-journal
+
+# Build outputs
+dist/
+dist-portable/
+target/
+target-check/
+target-check*/
+desktop/dist/
+desktop/src-tauri/target/
+desktop/src-tauri/target-check/
+desktop/src-tauri/target-check*/
+
+# Dependencies
+node_modules/
+desktop/node_modules/
+
+# Local tool installers
+tools/
+
+# Local test/import scratch files
+desktop/test.*
+desktop.csv
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/

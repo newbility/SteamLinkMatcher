@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Steam 链接匹配</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <h1>Steam 链接匹配</h1>
+          <p id="summary">0 条记录</p>
+        </div>
+        <div class="actions">
+          <input id="fileInput" type="file" accept=".txt,.csv,.xlsx" hidden />
+          <button id="importBtn" type="button">导入</button>
+          <button id="matchBtn" type="button" class="primary">开始匹配</button>
+          <button id="confirmAllBtn" type="button">确认全部复核</button>
+          <button id="copyBtn" type="button">复制链接</button>
+          <button id="copyBbcodeBtn" type="button">复制 BBCode</button>
+          <button id="copySframeBtn" type="button">复制 sframe</button>
+          <button id="exportCsvBtn" type="button">CSV</button>
+          <button id="exportXlsxBtn" type="button">XLSX</button>
+          <button id="clearSearchCacheBtn" type="button" class="ghost">清搜索缓存</button>
+          <button id="clearAllCacheBtn" type="button" class="ghost">清全部缓存</button>
+        </div>
+      </section>
+
+      <section class="proxy-panel">
+        <label for="proxyInput">Steam 代理</label>
+        <input id="proxyInput" type="text" spellcheck="false" placeholder="http://127.0.0.1:7890" />
+        <label for="delayInput">间隔 ms</label>
+        <input id="delayInput" type="number" min="0" max="10000" step="100" value="1500" />
+        <button id="saveProxyBtn" type="button">保存设置</button>
+        <button id="testProxyBtn" type="button">测试</button>
+        <span id="proxyStatus">未设置时使用当前系统网络</span>
+      </section>
+
+      <section class="workspace">
+        <aside class="input-pane">
+          <label for="nameInput">游戏名称</label>
+          <textarea id="nameInput" spellcheck="false" placeholder="Corpse Keeper&#10;Warhammer 40,000: Rogue Trader(2026.7.1到期）"></textarea>
+          <div class="input-actions">
+            <button id="loadTextBtn" type="button">载入文本</button>
+            <button id="clearTextBtn" type="button">清空</button>
+          </div>
+        </aside>
+
+        <section class="result-pane">
+          <div class="result-tools">
+            <button id="openQueuedBtn" type="button">队列打开链接</button>
+            <label for="openScopeSelect">范围</label>
+            <select id="openScopeSelect">
+              <option value="all">全部有链接</option>
+              <option value="review">仅需复核</option>
+              <option value="matched">仅已匹配</option>
+            </select>
+            <label for="openDelayInput">打开间隔 ms</label>
+            <input id="openDelayInput" type="number" min="100" max="10000" step="100" value="500" />
+            <label class="check-label">
+              <input id="reviewOnlyToggle" type="checkbox" />
+              只显示需复核
+            </label>
+          </div>
+          <div class="progress-wrap">
+            <div class="progress-label">
+              <span id="progressText">等待开始</span>
+              <span id="reviewText">需复核 0</span>
+            </div>
+            <div class="progress-track">
+              <div id="progressBar"></div>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>原始输入</th>
+                  <th>清洗后名称</th>
+                  <th>状态</th>
+                  <th>Steam 游戏名</th>
+                  <th>链接</th>
+                  <th>分数</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="resultBody">
+                <tr class="empty-row">
+                  <td colspan="7">暂无记录</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <div id="modalBackdrop" class="modal-backdrop" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <header>
+          <div>
+            <h2 id="modalTitle">复核候选</h2>
+            <p id="modalSub"></p>
+          </div>
+          <button id="closeModalBtn" type="button" class="icon-btn" aria-label="关闭">×</button>
+        </header>
+        <div id="candidateList" class="candidate-list"></div>
+        <form id="manualForm" class="manual-form">
+          <label for="manualUrl">手动链接</label>
+          <div class="manual-row">
+            <input id="manualUrl" type="url" placeholder="https://store.steampowered.com/app/..." />
+            <button type="submit">保存</button>
+          </div>
+          <p>保存时会自动读取 Steam 页面标题。</p>
+        </form>
+      </section>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
