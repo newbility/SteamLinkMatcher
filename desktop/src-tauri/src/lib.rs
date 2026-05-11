@@ -17,6 +17,7 @@ use zip::ZipArchive;
 
 const DEFAULT_REQUEST_DELAY_MS: u64 = 1500;
 const USER_AGENT: &str = "SteamLinkMatcher/0.2 (+tauri)";
+const SEARCH_CACHE_VERSION: &str = "v2";
 
 #[derive(Debug, Clone)]
 struct AppState {
@@ -468,6 +469,10 @@ fn is_likely_non_game(title: &str, url: &str) -> bool {
         "dedicated server",
         "wallpaper",
         "artbook",
+        " 试玩版",
+        "图集",
+        "原声音乐",
+        "原声音乐集",
         "upgrade pack",
         "season pass",
         "expansion pass",
@@ -520,6 +525,10 @@ fn fetch_url_with_proxy(
         match client
             .get(url)
             .header("Accept-Language", "en-US,en;q=0.9,zh-CN;q=0.8")
+            .header(
+                "Cookie",
+                "birthtime=315532801; lastagecheckage=1-January-1980; wants_mature_content=1; mature_content=1",
+            )
             .send()
         {
             Ok(response) => {
@@ -567,6 +576,9 @@ fn parse_search_results(page: &str, query: &str) -> Vec<Candidate> {
     let title_re =
         Regex::new(r#"(?is)<span[^>]+class="[^"]*\btitle\b[^"]*"[^>]*>(?P<title>.*?)</span>"#)
             .unwrap();
+    let suggest_title_re =
+        Regex::new(r#"(?is)<div[^>]+class="[^"]*\bmatch_name\b[^"]*"[^>]*>(?P<title>.*?)</div>"#)
+            .unwrap();
     let tag_re = Regex::new(r"(?is)<[^>]+>").unwrap();
     let mut seen = std::collections::HashSet::new();
     let mut candidates = Vec::new();
@@ -576,10 +588,13 @@ fn parse_search_results(page: &str, query: &str) -> Vec<Candidate> {
             continue;
         }
         let body = caps.name("body").unwrap().as_str();
-        let Some(title_caps) = title_re.captures(body) else {
+        let raw_title = title_re
+            .captures(body)
+            .or_else(|| suggest_title_re.captures(body))
+            .and_then(|title_caps| title_caps.name("title").map(|m| m.as_str()));
+        let Some(raw_title) = raw_title else {
             continue;
         };
-        let raw_title = title_caps.name("title").unwrap().as_str();
         let title = html_escape::decode_html_entities(&tag_re.replace_all(raw_title, ""))
             .trim()
             .to_string();
@@ -612,7 +627,7 @@ fn get_search_cache(
     query: &str,
     language: &str,
 ) -> anyhow::Result<Option<Vec<Candidate>>> {
-    let key = format!("{}:{}", language, cache_key(query));
+    let key = format!("{}:{}:{}", SEARCH_CACHE_VERSION, language, cache_key(query));
     let conn = db(state)?;
     let mut stmt = conn.prepare("SELECT candidates_json FROM search_cache WHERE query_key = ?1")?;
     let result = stmt.query_row([key], |row| row.get::<_, String>(0));
@@ -629,7 +644,7 @@ fn save_search_cache(
     language: &str,
     candidates: &[Candidate],
 ) -> anyhow::Result<()> {
-    let key = format!("{}:{}", language, cache_key(query));
+    let key = format!("{}:{}:{}", SEARCH_CACHE_VERSION, language, cache_key(query));
     let conn = db(state)?;
     conn.execute(
         "INSERT OR REPLACE INTO search_cache(query_key, query, candidates_json, updated_at) VALUES (?1, ?2, ?3, ?4)",
@@ -641,7 +656,9 @@ fn save_search_cache(
 fn search_steam(state: &AppState, query: &str) -> anyhow::Result<Vec<Candidate>> {
     let language = steam_search_language(query);
     if let Some(cached) = get_search_cache(state, query, language)? {
-        return Ok(cached);
+        if !cached.is_empty() {
+            return Ok(cached);
+        }
     }
     let url = format!(
         "https://store.steampowered.com/search/?term={}&category1=998&ndl=1&l={}",
@@ -649,9 +666,39 @@ fn search_steam(state: &AppState, query: &str) -> anyhow::Result<Vec<Candidate>>
         language
     );
     let page = fetch_url(state, &url, 20)?;
-    let candidates = parse_search_results(&page, query);
+    let mut candidates = parse_search_results(&page, query);
+    if candidates
+        .first()
+        .map(|candidate| candidate.score < 80)
+        .unwrap_or(true)
+    {
+        let suggest_url = format!(
+            "https://store.steampowered.com/search/suggest?term={}&f=games&cc=US&realm=1&l={}",
+            urlencoding::encode(query),
+            language
+        );
+        let suggest_page = fetch_url(state, &suggest_url, 20)?;
+        merge_candidates(&mut candidates, parse_search_results(&suggest_page, query));
+    }
     save_search_cache(state, query, language, &candidates)?;
     Ok(candidates)
+}
+
+fn merge_candidates(candidates: &mut Vec<Candidate>, new_candidates: Vec<Candidate>) {
+    for candidate in new_candidates {
+        if let Some(existing) = candidates
+            .iter_mut()
+            .find(|existing| existing.app_id == candidate.app_id)
+        {
+            if candidate.score > existing.score {
+                *existing = candidate;
+            }
+        } else {
+            candidates.push(candidate);
+        }
+    }
+    candidates.sort_by(|a, b| b.score.cmp(&a.score));
+    candidates.truncate(8);
 }
 
 fn push_unique(values: &mut Vec<String>, value: String) {
@@ -683,7 +730,10 @@ fn get_cached_match(state: &AppState, original: &str) -> anyhow::Result<Option<M
     match result {
         Ok(json) => {
             let mut item: MatchResult = serde_json::from_str(&json)?;
-            if item.status == "未找到" && item.message.contains("Steam 搜索失败") {
+            if (item.status == "未找到" && item.source == "自动匹配")
+                || item.status == "已推荐，需复核"
+                || item.source == "自动推荐"
+            {
                 return Ok(None);
             }
             item.from_cache = true;
@@ -1172,4 +1222,48 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_steam_suggest_results() {
+        let html = r#"<a class="match" data-ds-appid="1398070" href="https://store.steampowered.com/app/1398070/The_Book_of_Bondmaids/?snr=1_7_15__13"><div class="match_name">The Book of Bondmaids</div></a>"#;
+        let candidates = parse_search_results(html, "The Book of Bondmaids");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].app_id, "1398070");
+        assert_eq!(candidates[0].title, "The Book of Bondmaids");
+        assert_eq!(
+            candidates[0].url,
+            "https://store.steampowered.com/app/1398070/The_Book_of_Bondmaids/"
+        );
+        assert_eq!(candidates[0].score, 100);
+    }
+
+    #[test]
+    fn merge_candidates_prefers_better_score() {
+        let mut candidates = vec![Candidate {
+            app_id: "1".to_string(),
+            title: "Dragon Quest".to_string(),
+            url: "https://store.steampowered.com/app/1/Dragon_Quest/".to_string(),
+            score: 44,
+            confidence: "低".to_string(),
+            kind: "游戏本体".to_string(),
+        }];
+        merge_candidates(
+            &mut candidates,
+            vec![Candidate {
+                app_id: "1554470".to_string(),
+                title: "Dragon Island".to_string(),
+                url: "https://store.steampowered.com/app/1554470/Dragon_Island/".to_string(),
+                score: 100,
+                confidence: "高".to_string(),
+                kind: "游戏本体".to_string(),
+            }],
+        );
+        assert_eq!(candidates[0].app_id, "1554470");
+        assert_eq!(candidates[0].score, 100);
+    }
 }

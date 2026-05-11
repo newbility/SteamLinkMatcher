@@ -31,6 +31,7 @@
   let results: MatchResult[] = []
   let matching = false
   let matchingPaused = false
+  let stopRequested = false
   let opening = false
   let reviewOnly = false
   let progressText = '等待开始'
@@ -196,6 +197,7 @@
     setNames(names)
     matching = true
     matchingPaused = false
+    stopRequested = false
     const working = [...results]
     let lastFlush = 0
     let pendingProgressText = progressText
@@ -209,6 +211,7 @@
     }
     const waitWhilePaused = async (index: number) => {
       while (matchingPaused) {
+        if (stopRequested) return
         pendingProgressText = `已暂停 ${index}/${names.length}`
         flushResults(true)
         await sleep(120)
@@ -216,6 +219,11 @@
     }
     for (let index = 0; index < names.length; index += 1) {
       await waitWhilePaused(index)
+      if (stopRequested) {
+        pendingProgressText = `已停止 ${index}/${names.length}`
+        flushResults(true)
+        break
+      }
       working[index] = { ...working[index], status: '匹配中' }
       pendingProgressText = `匹配中 ${index}/${names.length}`
       flushResults()
@@ -234,13 +242,20 @@
       }
       flushResults()
       await waitWhilePaused(index + 1)
+      if (stopRequested) {
+        pendingProgressText = `已停止 ${index + 1}/${names.length}`
+        flushResults(true)
+        break
+      }
     }
-    pendingProgressText = `已处理 ${names.length}/${names.length}`
+    const processed = working.filter((item) => !['等待匹配', '匹配中'].includes(item.status)).length
+    pendingProgressText = stopRequested ? `已停止 ${processed}/${names.length}` : `已处理 ${names.length}/${names.length}`
     flushResults(true)
     results = [...working]
     matching = false
     matchingPaused = false
-    showToast('匹配完成')
+    stopRequested = false
+    showToast(pendingProgressText.startsWith('已停止') ? '已停止匹配' : '匹配完成')
   }
 
   function toggleMatchPause() {
@@ -248,6 +263,14 @@
     matchingPaused = !matchingPaused
     progressText = matchingPaused ? '暂停中，当前请求完成后停止继续匹配' : '继续匹配中'
     showToast(matchingPaused ? '已暂停匹配' : '已恢复匹配')
+  }
+
+  function stopMatch() {
+    if (!matching) return
+    stopRequested = true
+    matchingPaused = false
+    progressText = '停止中，当前请求完成后结束'
+    showToast('正在停止匹配')
   }
 
   function openReview(index: number) {
@@ -438,6 +461,7 @@
       <button type="button" on:click={chooseImportFile} disabled={matching || opening}>导入</button>
       <button type="button" class="primary" on:click={startMatch} disabled={matching || opening}>开始匹配</button>
       <button type="button" on:click={toggleMatchPause} disabled={!matching || opening}>{matchingPaused ? '继续匹配' : '暂停匹配'}</button>
+      <button type="button" on:click={stopMatch} disabled={!matching || opening || stopRequested}>停止匹配</button>
       <button type="button" on:click={confirmAllReview} disabled={matching || opening || !results.some((item) => item.needsReview && item.url)}>确认全部复核</button>
       <button type="button" on:click={copyLinks} disabled={!results.some((item) => item.url)}>复制链接</button>
       <button type="button" on:click={copyBbcode} disabled={!results.some((item) => item.url && item.steamTitle)}>复制 BBCode</button>
